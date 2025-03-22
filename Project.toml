@@ -1,0 +1,4 @@
+name = "CoalescentTrees"
+uuid = "26c9bc34-f79e-4b8f-ae0f-758864778f5a"
+authors = ["michaeltmeehan <michael.meehan1@jcu.edu.au>"]
+version = "0.1.0"
