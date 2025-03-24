@@ -11,6 +11,6 @@ include("bounded_coalescent.jl")
 
 export sample_tree, Tree, eachnode, get_leaves, is_leaf, get_parent, get_children, is_internal, is_binary, in_tree, get_ancestors
 export get_descendants, get_subtree
-export coalescence_probability
+export coalescent_probability
 
 end # module CoalescentTrees

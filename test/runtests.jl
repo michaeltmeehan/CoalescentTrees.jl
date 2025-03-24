@@ -135,3 +135,37 @@ end
     @test is_leaf(tree, 1)
 
 end
+
+
+@testset "Coalescent Probability" begin
+    Ne = 100.0
+
+    # --- Valid input tests ---
+
+    p = coalescent_probability(5, 1, 1.0, Ne)
+    @test isapprox(p, 7.206712e-8; atol=1e-14)
+
+    p = coalescent_probability(5, 2, 1.0, Ne)
+    @test isapprox(p, 2.854016e-5; atol=1e-5)
+
+    p = coalescent_probability(3, 3, 0.0, Ne)
+    @test isapprox(p, 1.0; atol=1e-10)
+
+    p = coalescent_probability(3, 3, 0.5, Ne)
+    @test isapprox(p, 0.9851119; atol=1e-6)
+
+    p = coalescent_probability(5, 1, 1000.0, Ne)
+    @test isapprox(p, 0.9999092; atol=1e-6)
+
+    p = coalescent_probability(5, 1, 1e-10, Ne)
+    @test isapprox(p, 0.0; atol=1e-6)
+
+    # --- Invalid input tests ---
+
+    @test_throws AssertionError coalescent_probability(3, 4, 1.0, Ne)  # n_small > n_big
+    @test_throws AssertionError coalescent_probability(0, 1, 1.0, Ne)  # n_big < 1
+    @test_throws AssertionError coalescent_probability(1, 0, 1.0, Ne)  # n_small < 1
+    @test_throws AssertionError coalescent_probability(5, 2, -1.0, Ne) # Δt < 0
+    @test_throws AssertionError coalescent_probability(5, 2, 1.0, 0.0) # Ne <= 0
+
+end
