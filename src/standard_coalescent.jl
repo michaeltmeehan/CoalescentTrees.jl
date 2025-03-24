@@ -5,7 +5,7 @@ function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Floa
     # Assertions to validate input arguments
     @assert length(sampled_sequences) == length(sequence_times) "sampled_sequences and sequence_times must have the same length"
     @assert all(x -> x >= 0, sampled_sequences) "sampled_sequences must contain non-negative integers"
-    @assert issorted(sequence_times) "sequence_times must be sorted in descending order"
+    @assert issorted(sequence_times) "sequence_times must be sorted in ascending order"
     @assert Ne > 0 "Effective population size (Ne) must be positive"
 
     total_sequences = sum(sampled_sequences)

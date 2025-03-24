@@ -55,13 +55,19 @@ Base.hash(tree::Tree, h::UInt) = hash((tree.time, tree.left, tree.right), h)
 
 Base.length(tree::Tree) = length(tree.time)
 
+root_time(tree::Tree) = tree.time[1]
+
 Base.eachindex(tree::Tree) = eachindex(tree.time)
 
 eachnode(tree::Tree; start::Int=1, stop::Int=length(tree)) = start:stop
 
 in_tree(tree::Tree, node::Int) = 1 ≤ node ≤ length(tree)
 
-is_leaf(tree::Tree, node::Int) = tree.left[node] == 0 && tree.right[node] == 0
+function is_leaf(tree::Tree, node::Int)
+    @assert in_tree(tree, node) "Node $node is not in the tree"    
+    return tree.left[node] == 0 && tree.right[node] == 0
+end
+
 
 function get_leaves(tree::Tree)
     leaves = Int[]
