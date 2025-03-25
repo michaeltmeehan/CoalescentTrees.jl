@@ -214,16 +214,54 @@ function sample_coalescence_time(t_lower::Float64, t_upper::Float64, n_small::In
 end
 
 
-function sample_coalescent_times(interval_times::Vector{Float64}, lineages::Vector{Int}, samples::Vector{Int}, Ne::Float64)
+function sample_event_times(interval_times::Vector{Float64}, lineages::Vector{Int}, samples::Vector{Int}, Ne::Float64)
     n_intervals = length(interval_times) - 1
-    coalescence_times = Vector{Float64}()
+    events = [(time = interval_times[1], type = 1)]  # Store bound time and event type
     for i in 1:n_intervals
         n_big = lineages[i+1]   # Number of lineages at the end of the interval (times[i])
         n_small = lineages[i] - samples[i]  # Number of lineages at the beginning of the interval (times[i+1])
-        if n_big > n_small
-            t = sample_coalescence_time(interval_times[i], interval_times[i+1], n_small, Ne)
-            push!(coalescence_times, t)
+        n_big > n_small && push!(events, (time = sample_coalescence_time(interval_times[i], interval_times[i+1], n_small, Ne), type = 2))  # Coalescence event)
+        samples[i+1] > 0 && push!(events, (time = interval_times[i+1], type = 0))   # Sampling event
+    end
+    return events
+end
+
+
+function sample_topology(events::Vector{@NamedTuple{time::Float64, type::Int}})
+    n_nodes = length(events)
+    times = Vector{Float64}(undef, n_nodes)
+    left = Vector{Int}(undef, n_nodes)
+    right = Vector{Int}(undef, n_nodes)
+    active_nodes = Int[]
+    for node in n_nodes:-1:1
+        if events[node].type == 0
+            # Sampling event
+            times[node] = events[node].time
+            left[node] = 0
+            right[node] = 0
+            insert!(active_nodes, rand(1:length(active_nodes)+1), node)
+        elseif events[node].type == 2
+            # Coalescence event
+            times[node] = events[node].time
+            left[node] = pop!(active_nodes)
+            right[node] = pop!(active_nodes)
+            insert!(active_nodes, rand(1:length(active_nodes)+1), node)
+        else
+            # Bound time (i.e. root)
+            times[node] = events[node].time
+            left[node] = pop!(active_nodes)
+            right[node] = 0
         end
     end
-    return coalescence_times
+    @assert isempty(active_nodes) "Still active nodes after tree construction."
+    return Tree(times, left, right)
+end
+
+
+function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
+    forward_probs = calc_forward_probs(sampled_sequences, sequence_times, bound_time, Ne)
+    lineages, _ = calc_backward_probs(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
+    interval_times, lineages, samples = partition_intervals(lineages, sampled_sequences, sequence_times, bound_time, Ne)
+    events = sample_event_times(interval_times, lineages, samples, Ne)
+    return sample_topology(events)
 end
