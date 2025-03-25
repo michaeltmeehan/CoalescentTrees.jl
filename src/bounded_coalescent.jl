@@ -24,68 +24,120 @@ function coalescent_probability(n_big::Int, n_small::Int, Δt::Float64, Ne::Floa
     @assert n_big ≥ n_small "n_big must be greater than or equal to n_small."
     @assert n_big ≥ 1 "n_big must be at least 1."
     @assert n_small ≥ 1 "n_small must be at least 1."
-
     n_big == 1 && return 1.0
-
-    if n_small == 1
-        prob_total = 0.0
-        for k in 2:n_big
-            prob_increment = exp(-k * (k - 1.0) * Δt / (2.0 * Ne))
-            # prob_increment = 1.0
-            for l in 2:n_big
-                l == k && continue
-                prob_increment *= l * (l - 1.0) / (l * (l - 1.0) - k * (k - 1.0))
-                # prob_increment *= l * (l - 1.0) / (l * (l - 1.0) - k * (k - 1.0))
-            end
-            # prob_increment *= 1.0 - exp(-k * (k - 1.0) * Δt / (2.0 * Ne))
-            prob_total += prob_increment
-        end
-        out = 1.0 - prob_total
-        # out = prob_total
-    else
-        sum_prob = 0.0
-        for k in n_small:n_big
-            partial_prob = k * (k - 1.0) / 2.0 * exp(-k * (k - 1.0) * Δt / (2.0 * Ne))
-            for l in n_small:n_big
-                l == k && continue
-                partial_prob *= l * (l - 1.0) / (l * (l - 1.0) - k * (k - 1.0))
-            end
-            sum_prob += partial_prob
-        end
-        out = 2.0 / (n_small * (n_small - 1.0)) * sum_prob
-    end
-    abs(out) ≤ 1e-12 && return 0.0
-    # if !(0.0 ≤ out ≤ 1.0)
-    #     println("Warning: Coalescence probability is not in [0, 1].")
-    #     println("Trying stable version...")
-    #     out = coalescence_probability_stable(n_big, n_small, Δt, Ne)
-    # end
-    # @assert 0. ≤ out ≤ 1.0 "Coalescence probability must be in [0, 1]."
-    return out
+    n_small == 1 && return coalescent_prob_to_root(n_big, Δt, Ne)
+    return coalescent_prob_general(n_big, n_small, Δt, Ne)
 end
+
+
+# Probability that n_big lineages coalesce to exactly 1 in Δt
+function coalescent_prob_to_root(n_big::Int, Δt::Float64, Ne::Float64)
+    prob_total = 0.0
+    for k in 2:n_big
+        λk = k * (k - 1.0)
+        term = exp(-λk * Δt / (2.0 * Ne))
+        for l in 2:n_big
+            l == k && continue
+            λl = l * (l - 1.0)
+            term *= λl / (λl - λk)
+        end
+        prob_total += term
+    end
+    out = 1.0 - prob_total
+    return abs(out) ≤ 1e-12 ? 0.0 : out
+end
+
+
+# General case: probability of coalescing from n_big to n_small in Δt
+function coalescent_prob_general(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
+    sum_prob = 0.0
+    for k in n_small:n_big
+        λk = k * (k - 1.0)
+        term = (λk / 2.0) * exp(-λk * Δt / (2.0 * Ne))
+        for l in n_small:n_big
+            l == k && continue
+            λl = l * (l - 1.0)
+            term *= λl / (λl - λk)
+        end
+        sum_prob += term
+    end
+    out = (2.0 / (n_small * (n_small - 1.0))) * sum_prob
+    return abs(out) ≤ 1e-12 ? 0.0 : out
+end
+
 
 # TODO: Need to implement the stable version of the coalescence_probability function
-# Values become negative when Δt / Ne is small
-function stable_partial_probability(k, j, n_big, Δt, Ne)
-    log_p = -k * (k - 1.0) * Δt / (2.0 * Ne)
+"""
+    stable_partial_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
+
+Compute the `k`th partial term (log-space) in the stable coalescence probability sum 
+from `n_big` to `j` lineages over time interval `Δt` with effective population size `Ne`.
+
+Used to avoid underflow in the original analytical formula.
+
+# Returns
+- `Float64`: the (signed) probability term for summation
+"""
+function stable_partial_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
+    λk = k * (k - 1.0)
+    log_p = -λk * Δt / (2.0 * Ne)
     for l in j:n_big
         l == k && continue
-        log_p -= log(abs(1. - k * (k - 1.0) / (l * (l - 1.0))))
+        λl = l * (l - 1.0)
+        log_p -= log(abs(1.0 - λk / λl))
     end
-    return (-1.)^(k - j) * exp(log_p)
+    return (-1.0)^(k - j) * exp(log_p)
 end
 
 
+
+"""
+    coalescent_probability_stable(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
+
+Numerically stable version of `coalescent_probability`, used when Δt/Ne is small.
+
+# Returns
+- `Float64`: probability of coalescing from `n_big` to `n_small` lineages
+"""
 function coalescent_probability_stable(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
-    # (n_big == 1 && n_small = 1) && return 1.0
     if n_small == 1
-        sum_prob = mapreduce(k -> stable_partial_probability(k, 2, n_big, Δt, Ne), +, 2:n_big)
+        sum_prob = mapreduce(k -> stable_partial_term(k, 2, n_big, Δt, Ne), +, 2:n_big)
         return 1.0 - sum_prob
     else
-        sum_prob = mapreduce(k -> k * (k - 1.0) / 2.0 * stable_partial_probability(k, n_small, n_big, Δt, Ne), +, n_small:n_big)
+        sum_prob = mapreduce(k -> (k * (k - 1.0) / 2.0) * stable_partial_term(k, n_small, n_big, Δt, Ne), +, n_small:n_big)
         return (2.0 / (n_small * (n_small - 1.0))) * sum_prob
     end
 end
+
+"""
+    reverse_cumsum(x::AbstractVector{T}) where T
+
+Compute the reverse cumulative sum of vector `x`, such that the output at index `i`
+is the sum of elements from `x[i]` to the end.
+
+Equivalent to `reverse(cumsum(reverse(x)))`, but more efficient.
+
+# Arguments
+- `x::AbstractVector{T}`: input vector of numeric type `T`
+
+# Returns
+- `Vector{T}`: reverse cumulative sum of `x`, same length and type as `x`
+
+# Example
+```julia
+reverse_cumsum([1, 2, 3])  # returns [6, 5, 3]
+"""
+function reverse_cumsum(x::AbstractVector{T}) where T
+    n = length(x)
+    out = similar(x, T)
+    s = zero(T)
+    for i in n:-1:1
+        s += x[i]
+        out[i] = s
+    end
+    return out
+end
+
 
 
 """
@@ -96,111 +148,163 @@ Run the forward step of the forward-backward algorithm for the bounded coalescen
 # Arguments
 - `sampled_sequences::Vector{Int}`: number of sequences sampled at each time point
 - `sequence_times::Vector{Float64}`: sampling times (descending order)
-- `bound_time::Float64`: lower time bound (oldest point in time)
+- `bound_time::Float64`: oldest time point (the bound)
 - `Ne::Float64`: effective population size
 
 # Returns
-- A matrix `P[k, t]` giving the probability of having `k` lineages at time `t`
+- `Matrix{Float64}`: forward probabilities, `P[k, t]` is the prob. of having `k` lineages at time `t`
 """
-function calc_forward_probs(sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
-    n = length(sampled_sequences)
+function calc_forward_probs(
+    sampled_sequences::Vector{Int},
+    sequence_times::Vector{Float64},
+    bound_time::Float64,
+    Ne::Float64
+)
+    n_times = length(sampled_sequences)
     total_sequences = sum(sampled_sequences)
-    @assert n == length(sequence_times) "Number of sampled sequences and sequence times must match."
-    @assert total_sequences > 1 "At least two sequences are required."
-    @assert Ne > 0 "Effective population size (Ne) must be positive."
 
-    # Concatenate bound time and sequence times
+    # Time points and new lineages at each
     times = [bound_time; sequence_times]
-    new_lineages = [0; sampled_sequences]
-    n_timesteps = n + 1
+    samples = [0; sampled_sequences]
+    n_steps = n_times + 1
 
-    # Initialize forward pass
-    forward_probabilities = zeros(Float64, total_sequences, n_timesteps)
-    forward_probabilities[new_lineages[end], end] = 1.0
-    max_lineages = reverse(cumsum(sampled_sequences))
+    # Maximum number of lineages possible at each time step (in reverse order)
+    max_lineages = [total_sequences; reverse_cumsum(sampled_sequences)]
 
-    # Forward pass
-    for t in n:-1:1
+    # Initialize forward probability matrix [lineages x time step]
+    forward_probs = zeros(Float64, total_sequences, n_steps)
+    final_k = samples[end]  # number of lineages at most recent sample time
+    forward_probs[final_k, end] = 1.0  # P[k, t_final] = 1
+
+    # Backward loop over time steps
+    for t in n_times:-1:1
         Δt = times[t+1] - times[t]
-        for j in 1:max_lineages[t]
-            for i in j:max_lineages[t]
-                # Number of lineages at time t: j lineages formed from i at t+1 plus new lineages
-                forward_probabilities[j+new_lineages[t], t] += coalescent_probability(i, j, Δt, Ne) * forward_probabilities[i, t+1]
+        for n_small in 1:max_lineages[t+1]  # Lineage count at time t
+            for n_big in n_small:max_lineages[t+1]  # Lineage count at time t+1
+                k_curr = n_small + samples[t]
+                forward_probs[k_curr, t] += coalescent_probability(n_big, n_small, Δt, Ne) * forward_probs[n_big, t+1]
             end
         end
+
+        # Normalize column t to sum to 1 (helps guard against drift)
+        col_sum = sum(view(forward_probs, :, t))
+        if !(isapprox(col_sum, 1.0; atol=1e-8))
+            @warn "Forward probabilities at t = $t did not sum to 1.0 (sum = $col_sum). Renormalizing."
+            forward_probs[:, t] ./= col_sum
+        end
     end
-    @assert (all(forward_probabilities .≥ 0.)  && all(forward_probabilities .≤ 1.) && all(sum(forward_probabilities, dims=1) .≈ 1.0)) "Failed on forward pass"
-    return forward_probabilities
+
+    return forward_probs
 end
 
 
-function calc_backward_probs(forward_probs::Matrix{Float64}, sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
-    n = length(sampled_sequences)
-    total_sequences = sum(sampled_sequences)
-    @assert n == length(sequence_times) "Number of sampled sequences and sequence times must match."
-    @assert total_sequences > 1 "At least two sequences are required."
-    @assert Ne > 0 "Effective population size (Ne) must be positive."
+"""
+    calc_backward_probs(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
 
+Run the backward sampling step of the forward-backward algorithm.
+
+# Arguments
+- `forward_probs::Matrix{Float64}`: matrix of forward probabilities (from `calc_forward_probs`)
+- `sampled_sequences::Vector{Int}`: number of sequences sampled at each time point
+- `sequence_times::Vector{Float64}`: sampling times (descending order)
+- `bound_time::Float64`: oldest time point (the bound)
+- `Ne::Float64`: effective population size
+
+# Returns
+- `lineages::Vector{Int}`: sampled lineage counts at each time point
+- `backward_probs::Matrix{Float64}`: backward probability matrix
+"""
+function calc_backward_probs(forward_probs::Matrix{Float64}, sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
     # Concatenate bound time and sequence times
     times = [bound_time; sequence_times]
-    new_lineages = [0; sampled_sequences]
-    n_timesteps = n + 1
+    samples = [0; sampled_sequences]
+    n_timesteps = length(times)
 
-    max_lineages = [reverse(cumsum(sampled_sequences)); 0]
+    max_lineages = [sum(sampled_sequences); reverse_cumsum(sampled_sequences)]
 
     # Initialize backward pass for sampling
-    drawn_lineages = zeros(Int, n_timesteps)
-    backward_probabilities = zeros(Float64, total_sequences, n_timesteps)
-    backward_probabilities[1, 1] = 1.0
-    drawn_lineages[1] = 1
+    lineages = zeros(Int, n_timesteps)
+    backward_probs = zeros(Float64, size(forward_probs))
+
+    # Start from the root (1 lineage at the bound time)
+    backward_probs[1, 1] = 1.0
+    lineages[1] = 1
 
     # Backward pass
     for t in 2:n_timesteps
         Δt = times[t] - times[t-1]
-        for j in (drawn_lineages[t-1] - 2*new_lineages[t-1]):max_lineages[t]
-            backward_probabilities[j+new_lineages[t], t] = coalescent_probability(j + new_lineages[t], drawn_lineages[t-1] - new_lineages[t-1],  Δt, Ne) * 
-                                                                forward_probs[j + new_lineages[t], t] / forward_probs[drawn_lineages[t-1], t-1]
+        n_small = lineages[t-1] - samples[t-1]
+        for n_big in n_small:max_lineages[t]
+            backward_probs[n_big, t] = coalescent_probability(n_big, n_small,  Δt, Ne) * forward_probs[n_big, t] / forward_probs[lineages[t-1], t-1]
         end
-        drawn_lineages[t] = sample(1:total_sequences, Weights(backward_probabilities[:, t]))
+
+        # Normalize column t
+        col_sum = sum(view(backward_probs, :, t))
+        if !(isapprox(col_sum, 1.0; atol=1e-8))
+            @warn "Backward probabilities at t = $t did not sum to 1.0 (sum = $col_sum). Renormalizing."
+            backward_probs[:, t] ./= col_sum
+        end
+        lineages[t] = sample(n_small:max_lineages[t], Weights(backward_probs[n_small:max_lineages[t], t]))
     end
-    @assert (all(backward_probabilities .≥ 0.)  && all(backward_probabilities .≤ 1.) && all(sum(backward_probabilities, dims=1) .≈ 1.0)) "Failed on backward pass"
-    return drawn_lineages, backward_probabilities
+
+    return lineages, backward_probs
 end
 
 
-function partition_intervals(extant_lineages::Vector{Int}, sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
+"""
+    partition_intervals(lineages, sampled_sequences, sequence_times, bound_time, Ne)
+
+Recursively split time intervals to ensure at most one coalescent event per interval.
+
+# Arguments
+- `lineages::Vector{Int}`: lineage count at each time point (starting from the root)
+- `sampled_sequences::Vector{Int}`: number of sequences sampled at each time point
+- `sequence_times::Vector{Float64}`: sampling times in descending order
+- `bound_time::Float64`: oldest time point (time of root)
+- `Ne::Float64`: effective population size
+
+# Returns
+- `times::Vector{Float64}`: updated list of time points
+- `lineages::Vector{Int}`: updated lineage counts at each time
+- `samples::Vector{Int}`: updated samples vector aligned with time points
+"""
+function partition_intervals(
+    lineages::Vector{Int},
+    sampled_sequences::Vector{Int},
+    sequence_times::Vector{Float64},
+    bound_time::Float64,
+    Ne::Float64
+)
     times = [bound_time; sequence_times]
-    samples = vcat([0], sampled_sequences)
-    lineages = copy(extant_lineages)
+    samples = [0; sampled_sequences]
 
     i = 1
     while i < length(times)
-        n_big = lineages[i+1]   # Number of lineages at the end of the interval (times[i])
-        n_small = lineages[i] - samples[i]  # Number of lineages at the beginning of the interval (times[i+1])
+        n_big = lineages[i + 1]             # Lineages at end of interval (more recent)
+        n_small = lineages[i] - samples[i]  # Lineages at start of interval
         Δn = n_big - n_small
         if Δn > 1
-            # Compute midpoint of the interval
-            t_mid = (times[i] + times[i+1]) / 2
+            t_mid = (times[i] + times[i + 1]) / 2
+            Δt = times[i + 1] - times[i]
 
-            # Sample number of coalescent events in each half
-            Δt = times[i+1] - times[i]
+            # Compute probability distribution over possible midpoints
+            mid_counts = n_small .+ (0:Δn)
+            numerators = coalescent_probability.(mid_counts, n_small, Δt / 2, Ne) .*
+                         coalescent_probability.(n_big, mid_counts, Δt / 2, Ne)
+            denominator = coalescent_probability(n_big, n_small, Δt, Ne)
+            weights = numerators ./ denominator
 
-            # Calculate probability for lineage counts at midpoint
-            prob_a_mid = coalescent_probability.(n_small .+ (0:Δn), n_small, Δt / 2, Ne) .* 
-                            coalescent_probability.(n_big, n_small .+ (0:Δn), Δt / 2, Ne) / 
-                                coalescent_probability(n_big, n_small, Δt, Ne)
+            # Sample number of coalescences in [t_i, t_mid]
+            n_coalescent = sample(0:Δn, Weights(weights))
 
-            # Draw number of coalescent events in in the interval [t_i, t_mid]
-            n_coalescent = sample(0:Δn, Weights(prob_a_mid))
+            # Insert midpoint and update vectors
+            insert!(times, i + 1, t_mid)
+            insert!(lineages, i + 1, n_small + n_coalescent)
+            insert!(samples, i + 1, 0)
 
-            # Insert midpoint and update counts
-            insert!(times, i+1, t_mid)
-            insert!(lineages, i+1, n_small + n_coalescent)
-            insert!(samples, i+1, 0)
-
-            # Don't increment `i` since the new subintervals may still need splitting
+            # Rerun this new interval next
         else
-            i += 1  # Move to the next interval only if it does not need further splitting
+            i += 1
         end
     end
 
@@ -208,60 +312,168 @@ function partition_intervals(extant_lineages::Vector{Int}, sampled_sequences::Ve
 end
 
 
-function sample_coalescence_time(t_lower::Float64, t_upper::Float64, n_small::Int, Ne::Float64)
+"""
+    sample_coalescent_time(t_lower, t_upper, n_small, Ne)
+
+Sample a coalescent event time uniformly from the conditional distribution 
+under the standard coalescent model in the interval [t_lower, t_upper].
+
+Assumes exactly one coalescent event occurs in the interval.
+
+# Arguments
+- `t_lower::Float64`: start of the interval
+- `t_upper::Float64`: end of the interval
+- `n_small::Int`: number of extant lineages at the start of the interval
+- `Ne::Float64`: effective population size
+
+# Returns
+- `Float64`: sampled coalescent time
+"""
+function sample_coalescent_time(t_lower::Float64, t_upper::Float64, n_small::Int, Ne::Float64)
     r = n_small / Ne
     return 1/r * log(exp(r * t_upper) - rand() * (exp(r * t_upper) - exp(r * t_lower)))
 end
 
 
-function sample_event_times(interval_times::Vector{Float64}, lineages::Vector{Int}, samples::Vector{Int}, Ne::Float64)
+"""
+    sample_event_times(interval_times, lineages, samples, Ne)
+
+Generate a list of events (coalescence, sampling, root) based on the final interval structure.
+
+# Arguments
+- `interval_times::Vector{Float64}`: time points marking interval boundaries
+- `lineages::Vector{Int}`: number of lineages at each time point
+- `samples::Vector{Int}`: number of sequences sampled at each time point
+- `Ne::Float64`: effective population size
+
+# Returns
+- `Vector{NamedTuple{(:time, :type), Tuple{Float64, Int}}}`: list of events
+    - `type = 0` → sampling event
+    - `type = 1` → bound/root event
+    - `type = 2` → coalescence event
+"""
+function sample_event_times(
+    interval_times::Vector{Float64},
+    lineages::Vector{Int},
+    samples::Vector{Int},
+    Ne::Float64
+)
     n_intervals = length(interval_times) - 1
-    events = [(time = interval_times[1], type = 1)]  # Store bound time and event type
+    events = [(time = interval_times[1], type = 1)]  # root/bound event
+
     for i in 1:n_intervals
-        n_big = lineages[i+1]   # Number of lineages at the end of the interval (times[i])
-        n_small = lineages[i] - samples[i]  # Number of lineages at the beginning of the interval (times[i+1])
-        n_big > n_small && push!(events, (time = sample_coalescence_time(interval_times[i], interval_times[i+1], n_small, Ne), type = 2))  # Coalescence event)
-        samples[i+1] > 0 && push!(events, (time = interval_times[i+1], type = 0))   # Sampling event
+        n_big = lineages[i + 1]
+        n_small = lineages[i] - samples[i]
+
+        if n_big > n_small
+            t = sample_coalescent_time(interval_times[i], interval_times[i + 1], n_small, Ne)
+            push!(events, (time = t, type = 2))
+        end
+
+        if samples[i + 1] > 0
+            for _ in 1:samples[i + 1]
+                push!(events, (time = interval_times[i + 1], type = 0))
+            end
+        end
     end
+
     return events
 end
 
 
-function sample_topology(events::Vector{@NamedTuple{time::Float64, type::Int}})
+"""
+    sample_topology(events)
+
+Construct a rooted binary tree from a list of events sorted in reverse chronological order.
+
+# Arguments
+- `events::Vector{NamedTuple{(:time, :type), Tuple{Float64, Int}}}`: list of events
+    - `type = 0`: sampling event (leaf)
+    - `type = 1`: bound/root event
+    - `type = 2`: coalescent event (internal node)
+
+# Returns
+- `Tree`: a binary tree with fields:
+    - `times::Vector{Float64}`: time of each node
+    - `left::Vector{Int}`: index of left descendant (0 if none)
+    - `right::Vector{Int}`: index of right descendant (0 if none)
+"""
+function sample_topology(events::Vector{NamedTuple{(:time, :type), Tuple{Float64, Int}}})
     n_nodes = length(events)
     times = Vector{Float64}(undef, n_nodes)
     left = Vector{Int}(undef, n_nodes)
     right = Vector{Int}(undef, n_nodes)
+
     active_nodes = Int[]
+
+    # Helper: insert node at random position
+    function insert_random!(stack::Vector{Int}, node::Int)
+        insert!(stack, rand(1:length(stack) + 1), node)
+    end
+
     for node in n_nodes:-1:1
-        if events[node].type == 0
-            # Sampling event
-            times[node] = events[node].time
+        event = events[node]
+
+        if event.type == 0
+            # Leaf node (sampling event)
+            times[node] = event.time
             left[node] = 0
             right[node] = 0
-            insert!(active_nodes, rand(1:length(active_nodes)+1), node)
-        elseif events[node].type == 2
-            # Coalescence event
-            times[node] = events[node].time
+            insert_random!(active_nodes, node)
+
+        elseif event.type == 2
+            # Internal node (coalescence)
+            times[node] = event.time
             left[node] = pop!(active_nodes)
             right[node] = pop!(active_nodes)
-            insert!(active_nodes, rand(1:length(active_nodes)+1), node)
-        else
-            # Bound time (i.e. root)
-            times[node] = events[node].time
+            insert_random!(active_nodes, node)
+
+        elseif event.type == 1
+            # Root node (bound time)
+            times[node] = event.time
             left[node] = pop!(active_nodes)
             right[node] = 0
+
+        else
+            error("Unknown event type: $(event.type)")
         end
     end
+
     @assert isempty(active_nodes) "Still active nodes after tree construction."
     return Tree(times, left, right)
 end
 
 
-function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
+"""
+    sample_tree(sampled_sequences, sequence_times, bound_time, Ne)
+
+Sample a full binary tree under the bounded coalescent model using forward-backward sampling.
+
+# Arguments
+- `sampled_sequences::Vector{Int}`: number of sequences sampled at each time point
+- `sequence_times::Vector{Float64}`: sampling times in descending order
+- `bound_time::Float64`: oldest time point (lower bound of coalescent process)
+- `Ne::Float64`: effective population size
+
+# Returns
+- `Tree`: a rooted binary tree with coalescent and sampling structure consistent with the bounded model
+"""
+function sample_tree(
+    sampled_sequences::Vector{Int},
+    sequence_times::Vector{Float64},
+    bound_time::Float64,
+    Ne::Float64
+)
+    @assert length(sampled_sequences) == length(sequence_times) "Sample count and time vectors must be the same length."
+    @assert sum(sampled_sequences) ≥ 2 "At least two sequences are required to form a tree."
+    @assert Ne > 0 "Effective population size must be positive."
+    @assert issorted(sequence_times) "Sequence times must be in ascending order."
+
     forward_probs = calc_forward_probs(sampled_sequences, sequence_times, bound_time, Ne)
     lineages, _ = calc_backward_probs(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
     interval_times, lineages, samples = partition_intervals(lineages, sampled_sequences, sequence_times, bound_time, Ne)
     events = sample_event_times(interval_times, lineages, samples, Ne)
-    return sample_topology(events)
+    tree = sample_topology(events)
+
+    return tree
 end

@@ -117,8 +117,8 @@ end
     @test length(tree) == 2 * sum(sampled_sequences) - 1
     @test all(isfinite.(tree.time))
     @test issorted(tree.time)
-    @test all(subtree.left[i] ≥ i for i in eachnode(subtree) if subtree.left[i] != 0)
-    @test all(subtree.right[i] ≥ i for i in eachnode(subtree) if subtree.right[i] != 0)
+    @test all(tree.left[i] ≥ i for i in eachnode(tree) if tree.left[i] != 0)
+    @test all(tree.right[i] ≥ i for i in eachnode(tree) if tree.right[i] != 0)
 
     # --- Assertion checks ---
     @test_throws AssertionError sample_tree(sampled_sequences, [3.], Ne)
