@@ -109,36 +109,6 @@ function coalescent_probability_stable(n_big::Int, n_small::Int, Δt::Float64, N
     end
 end
 
-"""
-    reverse_cumsum(x::AbstractVector{T}) where T
-
-Compute the reverse cumulative sum of vector `x`, such that the output at index `i`
-is the sum of elements from `x[i]` to the end.
-
-Equivalent to `reverse(cumsum(reverse(x)))`, but more efficient.
-
-# Arguments
-- `x::AbstractVector{T}`: input vector of numeric type `T`
-
-# Returns
-- `Vector{T}`: reverse cumulative sum of `x`, same length and type as `x`
-
-# Example
-```julia
-reverse_cumsum([1, 2, 3])  # returns [6, 5, 3]
-"""
-function reverse_cumsum(x::AbstractVector{T}) where T
-    n = length(x)
-    out = similar(x, T)
-    s = zero(T)
-    for i in n:-1:1
-        s += x[i]
-        out[i] = s
-    end
-    return out
-end
-
-
 
 """
     calc_forward_probs(sampled_sequences, sequence_times, bound_time, Ne)
@@ -406,33 +376,25 @@ function sample_topology(events::Vector{NamedTuple{(:time, :type), Tuple{Float64
 
     active_nodes = Int[]
 
-    # Helper: insert node at random position
-    function insert_random!(stack::Vector{Int}, node::Int)
-        insert!(stack, rand(1:length(stack) + 1), node)
-    end
-
     for node in n_nodes:-1:1
         event = events[node]
 
         if event.type == 0
             # Leaf node (sampling event)
             times[node] = event.time
-            left[node] = 0
-            right[node] = 0
-            insert_random!(active_nodes, node)
+            left[node] = right[node] = 0
+            push!(active_nodes, node)
 
         elseif event.type == 2
             # Internal node (coalescence)
             times[node] = event.time
-            left[node] = pop!(active_nodes)
-            right[node] = pop!(active_nodes)
-            insert_random!(active_nodes, node)
+            left[node], right[node] = pop_random!(active_nodes), pop_random!(active_nodes)
+            push!(active_nodes, node)
 
         elseif event.type == 1
             # Root node (bound time)
             times[node] = event.time
-            left[node] = pop!(active_nodes)
-            right[node] = 0
+            left[node], right[node] = pop_random!(active_nodes), 0
 
         else
             error("Unknown event type: $(event.type)")

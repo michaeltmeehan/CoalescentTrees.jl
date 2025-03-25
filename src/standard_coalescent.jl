@@ -23,7 +23,7 @@ function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Floa
         # Add new sampled lineages to tree
         for _ in 1:new_sequences[t_idx]
             time[node_idx] = current_time
-            insert!(active_nodes, rand(1:length(active_nodes)+1), node_idx)
+            push!(active_nodes, node_idx)
             node_idx -= 1
         end
 
@@ -34,9 +34,9 @@ function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Floa
         while current_time - time_to_coalescence > next_time # && active_nodes > 1
             current_time -= time_to_coalescence
             time[node_idx] = current_time
-            left_child, right_child = pop!(active_nodes), pop!(active_nodes)
+            left_child, right_child = pop_random!(active_nodes), pop_random!(active_nodes)
             left[node_idx], right[node_idx] = left_child, right_child
-            insert!(active_nodes, rand(1:length(active_nodes)+1), node_idx)
+            push!(active_nodes, node_idx)
             node_idx -= 1
             n_active -= 1
             n_active < 2 && break
