@@ -17,14 +17,14 @@ function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Floa
     active_nodes = Int[]
     time_steps = [-Inf; sequence_times]
     new_sequences = [0; sampled_sequences]
-    node_idx = total_nodes
+    node = total_nodes
     for t_idx in length(time_steps):-1:2
         current_time = time_steps[t_idx]
         # Add new sampled lineages to tree
         for _ in 1:new_sequences[t_idx]
-            time[node_idx] = current_time
-            push!(active_nodes, node_idx)
-            node_idx -= 1
+            time[node] = current_time
+            push!(active_nodes, node)
+            node -= 1
         end
 
         # Coalesce lineages
@@ -33,11 +33,11 @@ function sample_tree(sampled_sequences::Vector{Int}, sequence_times::Vector{Floa
         time_to_coalescence = rand(Exponential(2 * Ne / (n_active * (n_active - 1))))
         while current_time - time_to_coalescence > next_time # && active_nodes > 1
             current_time -= time_to_coalescence
-            time[node_idx] = current_time
+            time[node] = current_time
             left_child, right_child = pop_random!(active_nodes), pop_random!(active_nodes)
-            left[node_idx], right[node_idx] = left_child, right_child
-            push!(active_nodes, node_idx)
-            node_idx -= 1
+            left[node], right[node] = left_child, right_child
+            push!(active_nodes, node)
+            node -= 1
             n_active -= 1
             n_active < 2 && break
             time_to_coalescence = rand(Exponential(2 * Ne / (n_active * (n_active - 1))))

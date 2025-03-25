@@ -1,3 +1,75 @@
+# =============================================================================
+# Bounded Coalescent Tree Sampler
+# =============================================================================
+# This module implements a forward-backward algorithm for sampling phylogenetic
+# trees under the bounded coalescent model. The model conditions on:
+#   - a lower time bound (the root age),
+#   - an effective population size (Ne),
+#   - a sequence of heterochronous sampling times and counts.
+#
+# The implementation follows a five-step algorithm:
+#
+#   1. Forward Filtering Backward Sampling (FFBS):
+#      - Run a forward pass to compute the distribution over lineage counts at
+#        each sampling time conditioned on the root time (bound).
+#      - Sample a valid lineage count path using backward sampling.
+#
+#   2. Determine the number of coalescent events in each time interval:
+#      - Based on sampled lineage counts and sampling times.
+#
+#   3. Partition intervals:
+#      - Subdivide intervals with multiple coalescent events until each interval
+#        contains at most one event.
+#      - Sample the number of events per subinterval using a conditional
+#        distribution.
+#
+#   4. Sample coalescent times:
+#      - Use inverse transform sampling from the coalescent rate conditioned on
+#        exactly one coalescent event.
+#
+#   5. Sample tree topology:
+#      - Traverse the event list in reverse chronological order.
+#      - Build a rooted binary tree by randomly pairing extant lineages at each
+#        coalescence event.
+
+# -----------------------------------------------------------------------------
+# Function Overview
+# -----------------------------------------------------------------------------
+# - coalescent_probability          : Main probability function (delegates to special cases)
+# - coalescent_probability_to_root        : Analytic form for coalescing to a single root
+# - coalescent_probability_general        : Analytic form for general k → j coalescence
+# - coalescent_probability_stable  : Stable alternative when Δt/Ne is small
+#
+# - calc_forward_probs             : Forward pass (FFBS step 1a)
+# - sample_lineages_backward            : Backward sampling pass (FFBS step 1b)
+#
+# - partition_intervals            : Recursive subdivision of intervals with >1 coalescent
+# - sample_coalescent_time         : Inverse-transform sampling for coalescent times
+# - construct_event_list             : Convert interval structure to timestamped events
+# - sample_topology                : Build tree topology from event list
+# - sample_tree                    : Main entry point — executes full sampling pipeline
+#
+# Utility functions (in separate utils.jl file):
+# - reverse_cumsum                 : Efficient backward cumulative sum
+# - pop_random!                    : Randomly pop an element from a vector in O(1) time
+#
+# -----------------------------------------------------------------------------
+# Expected Usage
+# -----------------------------------------------------------------------------
+# Call `sample_tree(sampled_sequences, sequence_times, bound_time, Ne)` to
+# generate a random phylogenetic tree under the bounded coalescent model.
+#
+# All time vectors must be sorted in ascending order, and `sampled_sequences`
+# must sum to at least 2.
+#
+# The output is a `Tree` structure containing:
+#   - `times`: node times
+#   - `left`, `right`: indices of child nodes
+#
+# Tree construction assumes time is measured backwards from the present.
+# =============================================================================
+
+
 """
     coalescence_probability(n_big, n_small, Δt, Ne)
 
@@ -25,14 +97,14 @@ function coalescent_probability(n_big::Int, n_small::Int, Δt::Float64, Ne::Floa
     @assert n_big ≥ 1 "n_big must be at least 1."
     @assert n_small ≥ 1 "n_small must be at least 1."
     n_big == 1 && return 1.0
-    n_small == 1 && return coalescent_prob_to_root(n_big, Δt, Ne)
-    return coalescent_prob_general(n_big, n_small, Δt, Ne)
+    n_small == 1 && return coalescent_probability_to_root(n_big, Δt, Ne)
+    return coalescent_probability_general(n_big, n_small, Δt, Ne)
 end
 
 
 # Probability that n_big lineages coalesce to exactly 1 in Δt
-function coalescent_prob_to_root(n_big::Int, Δt::Float64, Ne::Float64)
-    prob_total = 0.0
+function coalescent_probability_to_root(n_big::Int, Δt::Float64, Ne::Float64)
+    probability_total = 0.0
     for k in 2:n_big
         λk = k * (k - 1.0)
         term = exp(-λk * Δt / (2.0 * Ne))
@@ -41,15 +113,15 @@ function coalescent_prob_to_root(n_big::Int, Δt::Float64, Ne::Float64)
             λl = l * (l - 1.0)
             term *= λl / (λl - λk)
         end
-        prob_total += term
+        probability_total += term
     end
-    out = 1.0 - prob_total
+    out = 1.0 - probability_total
     return abs(out) ≤ 1e-12 ? 0.0 : out
 end
 
 
 # General case: probability of coalescing from n_big to n_small in Δt
-function coalescent_prob_general(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
+function coalescent_probability_general(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
     sum_prob = 0.0
     for k in n_small:n_big
         λk = k * (k - 1.0)
@@ -66,9 +138,9 @@ function coalescent_prob_general(n_big::Int, n_small::Int, Δt::Float64, Ne::Flo
 end
 
 
-# TODO: Need to implement the stable version of the coalescence_probability function
+# TODO: Need to implement the stable version of the coalescent_probability function
 """
-    stable_partial_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
+    stable_partial_probability_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
 
 Compute the `k`th partial term (log-space) in the stable coalescence probability sum 
 from `n_big` to `j` lineages over time interval `Δt` with effective population size `Ne`.
@@ -78,7 +150,7 @@ Used to avoid underflow in the original analytical formula.
 # Returns
 - `Float64`: the (signed) probability term for summation
 """
-function stable_partial_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
+function stable_partial_probability_term(k::Int, j::Int, n_big::Int, Δt::Float64, Ne::Float64)
     λk = k * (k - 1.0)
     log_p = -λk * Δt / (2.0 * Ne)
     for l in j:n_big
@@ -101,10 +173,10 @@ Numerically stable version of `coalescent_probability`, used when Δt/Ne is smal
 """
 function coalescent_probability_stable(n_big::Int, n_small::Int, Δt::Float64, Ne::Float64)
     if n_small == 1
-        sum_prob = mapreduce(k -> stable_partial_term(k, 2, n_big, Δt, Ne), +, 2:n_big)
+        sum_prob = mapreduce(k -> stable_partial_probability_term(k, 2, n_big, Δt, Ne), +, 2:n_big)
         return 1.0 - sum_prob
     else
-        sum_prob = mapreduce(k -> (k * (k - 1.0) / 2.0) * stable_partial_term(k, n_small, n_big, Δt, Ne), +, n_small:n_big)
+        sum_prob = mapreduce(k -> (k * (k - 1.0) / 2.0) * stable_partial_probability_term(k, n_small, n_big, Δt, Ne), +, n_small:n_big)
         return (2.0 / (n_small * (n_small - 1.0))) * sum_prob
     end
 end
@@ -169,7 +241,7 @@ end
 
 
 """
-    calc_backward_probs(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
+    sample_lineages_backward(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
 
 Run the backward sampling step of the forward-backward algorithm.
 
@@ -184,7 +256,7 @@ Run the backward sampling step of the forward-backward algorithm.
 - `lineages::Vector{Int}`: sampled lineage counts at each time point
 - `backward_probs::Matrix{Float64}`: backward probability matrix
 """
-function calc_backward_probs(forward_probs::Matrix{Float64}, sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
+function sample_lineages_backward(forward_probs::Matrix{Float64}, sampled_sequences::Vector{Int}, sequence_times::Vector{Float64}, bound_time::Float64, Ne::Float64)
     # Concatenate bound time and sequence times
     times = [bound_time; sequence_times]
     samples = [0; sampled_sequences]
@@ -216,6 +288,7 @@ function calc_backward_probs(forward_probs::Matrix{Float64}, sampled_sequences::
         end
         lineages[t] = sample(n_small:max_lineages[t], Weights(backward_probs[n_small:max_lineages[t], t]))
     end
+    @assert all(samples .≤ lineages .≤ max_lineages) "Sampled lineages out of bounds."
 
     return lineages, backward_probs
 end
@@ -306,7 +379,7 @@ end
 
 
 """
-    sample_event_times(interval_times, lineages, samples, Ne)
+    construct_event_list(interval_times, lineages, samples, Ne)
 
 Generate a list of events (coalescence, sampling, root) based on the final interval structure.
 
@@ -322,7 +395,7 @@ Generate a list of events (coalescence, sampling, root) based on the final inter
     - `type = 1` → bound/root event
     - `type = 2` → coalescence event
 """
-function sample_event_times(
+function construct_event_list(
     interval_times::Vector{Float64},
     lineages::Vector{Int},
     samples::Vector{Int},
@@ -346,7 +419,7 @@ function sample_event_times(
             end
         end
     end
-
+    @assert issorted(events, by=x->x.time) "Events are not sorted by time."
     return events
 end
 
@@ -432,9 +505,9 @@ function sample_tree(
     @assert issorted(sequence_times) "Sequence times must be in ascending order."
 
     forward_probs = calc_forward_probs(sampled_sequences, sequence_times, bound_time, Ne)
-    lineages, _ = calc_backward_probs(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
+    lineages, _ = sample_lineages_backward(forward_probs, sampled_sequences, sequence_times, bound_time, Ne)
     interval_times, lineages, samples = partition_intervals(lineages, sampled_sequences, sequence_times, bound_time, Ne)
-    events = sample_event_times(interval_times, lineages, samples, Ne)
+    events = construct_event_list(interval_times, lineages, samples, Ne)
     tree = sample_topology(events)
 
     return tree
