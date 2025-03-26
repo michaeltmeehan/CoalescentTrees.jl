@@ -222,8 +222,9 @@ function calc_forward_probs(
     for t in n_times:-1:1
         Δt = times[t+1] - times[t]
         for n_small in 1:max_lineages[t+1]  # Lineage count at time t
+            k_curr = n_small + samples[t]
             for n_big in n_small:max_lineages[t+1]  # Lineage count at time t+1
-                k_curr = n_small + samples[t]
+                forward_probs[n_big, t+1] == 0.0 && continue
                 forward_probs[k_curr, t] += coalescent_probability(n_big, n_small, Δt, Ne) * forward_probs[n_big, t+1]
             end
         end
@@ -277,6 +278,7 @@ function sample_lineages_backward(forward_probs::Matrix{Float64}, sampled_sequen
         Δt = times[t] - times[t-1]
         n_small = lineages[t-1] - samples[t-1]
         for n_big in n_small:max_lineages[t]
+            forward_probs[n_big, t] == 0.0 && continue
             backward_probs[n_big, t] = coalescent_probability(n_big, n_small,  Δt, Ne) * forward_probs[n_big, t] / forward_probs[lineages[t-1], t-1]
         end
 
