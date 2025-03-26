@@ -1,3 +1,45 @@
+###############################################################################
+# Coalescent Tree Sampler: Standard (Unbounded) Coalescent Model
+#
+# This script implements a simulation of genealogical trees under the standard
+# (Kingman) coalescent process with a constant effective population size (Ne).
+# Unlike the bounded coalescent model, this version assumes that the coalescent
+# process continues indefinitely backward in time, without conditioning on a
+# fixed bound or root time.
+#
+# -----------------------------------------------------------------------------
+# Algorithm Overview:
+#
+# 1. Traverse backward in time across sampling time points.
+# 2. At each time point:
+#    a. Add newly sampled lineages to the active pool.
+#    b. Simulate exponential waiting times between coalescent events:
+#       - The rate is determined by the number of active lineages: λ = k(k−1)/(2Ne).
+#       - Continue simulating coalescent events while the next event occurs before
+#         the previous sampling time.
+# 3. For each coalescence:
+#    - Sample two lineages at random to coalesce.
+#    - Create an internal node with its time and descendant pointers.
+#
+# -----------------------------------------------------------------------------
+# Inputs:
+# - `sampled_sequences::Vector{Int}`: number of sequences sampled at each time.
+# - `sequence_times::Vector{Float64}`: corresponding sampling times (ascending order).
+# - `Ne::Float64`: effective population size.
+#
+# Output:
+# - `Tree`: a binary tree with fields:
+#     - `time::Vector{Float64}`: coalescent/sampling times for all nodes.
+#     - `left::Vector{Int}`, `right::Vector{Int}`: indices of child nodes.
+#
+# Notes:
+# - Output tree includes both leaf and internal nodes, with total size 2n − 1.
+# - Sampling events and coalescences are processed backward in time.
+# - The root is the final coalescent event joining the last two lineages.
+#
+###############################################################################
+
+
 import Distributions: Exponential
 
 
